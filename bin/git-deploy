@@ -13,6 +13,7 @@ require 'net/ftp'
 require 'net/ssh'
 require 'net/sftp'
 require 'tempfile'
+require 'ruby-debug'
 
 # Store the current revision
 revision = `git rev-parse HEAD`.chomp.strip
@@ -217,9 +218,10 @@ module Git
     def connect
       puts "Connecting to #{@host}"
       sftp_options = {}
-#      sftp_options[:verbose] = :debug
+#      sftp_options[:verbose] = :info
       sftp_options[:port] = @uri.port if @uri.port
-      @sftp = Net::SFTP.start(@options['host'], @options['user'], sftp_options)
+      sftp_options[:password] = @options['password']
+    	@sftp = Net::SFTP.start(@options['host'], @options['user'], sftp_options)
     end
 
     def disconnect
@@ -227,14 +229,16 @@ module Git
     end
 
     def put(local_file, remote_file)
+    	mkdir_p File.dirname ("#{@path}/#{remote_file}")
       @sftp.upload!(local_file, "#{@path}/#{remote_file}")
     end
 
     def delete(remote_file)
-      @sftp.remove!("#{@remote_file}")
+      @sftp.remove!("#{@path}/#{remote_file}")
     end
 
     def get_remote_revision
+      remote_revision = false
       begin
         @sftp.file.open("#{@path}/REVISION", "r") do |f|
           remote_revision = f.gets
@@ -246,6 +250,39 @@ module Git
         remote_revision = revision
       end
       remote_revision
+    end
+    
+    def connection
+    	@sftp
+    end
+    
+    def mkdir_p(directory)
+      begin
+        parent = File.dirname(directory)
+        files = connection.file
+        if directory == "." || files.directory?(directory)
+        	return
+        else
+          puts "Creating Directory #{directory}"
+          connection.mkdir!(directory)
+        end
+      rescue Net::FTPPermError
+        self.mkdir_p(File.dirname(directory))
+        begin
+          connection.mkdir!(directory)
+        rescue Net::FTPPermError
+          # pass
+        end
+      rescue Net::SFTP::StatusException
+      	debugger
+        begin
+          puts "Creating Directory #{directory}"
+          connection.mkdir!(directory)
+        rescue Net::SFTP::StatusException => e
+          self.mkdir_p(File.dirname(directory))
+          connection.mkdir!(directory)
+        end
+      end
     end
   end
 
